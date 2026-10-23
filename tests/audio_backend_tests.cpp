@@ -20,9 +20,11 @@ public:
     void pass_desc(const DeviceDesc&) override {}
 };
 
-auto wait_for(AudioDevice& device, AudioDeviceState expected) -> bool {
+auto wait_for(AudioDevice& device, AudioDeviceState expected, u64 buffer_revision = {}) -> bool {
     for (int i = 0; i < 150; ++i) {
-        if (device.state() == expected) return true;
+        if (device.state() == expected &&
+            device.completed_playback_buffer_revision() == buffer_revision)
+            return true;
         if (device.state() == AudioDeviceState::Failed) return false;
         pause_test();
     }
@@ -52,7 +54,9 @@ int run(int argc, char**) {
     if (argc > 1) {
         desired.active  = true;
         desired.playing = true;
-        if (! device.apply(desired.clone()) || ! wait_for(device, AudioDeviceState::ReadyPlaying))
+        desired.playback_buffer_revision = u64(1);
+        if (! device.apply(desired.clone()) ||
+            ! wait_for(device, AudioDeviceState::ReadyPlaying, u64(1)))
             return 10;
         for (int i = 0; i < 150 && device.stream_position_frames() == u64(); ++i) pause_test();
         if (device.stream_position_frames() == u64()) return 11;
@@ -60,12 +64,18 @@ int run(int argc, char**) {
         pause_test();
         if (device.stream_position_frames() < position) return 12;
         desired.playing = false;
-        if (! device.apply(desired.clone()) || ! wait_for(device, AudioDeviceState::ReadyPaused))
+        if (! device.apply(desired.clone()) ||
+            ! wait_for(device, AudioDeviceState::ReadyPaused, u64(1)))
             return 13;
-        desired.playback_buffer_revision = u64(1);
+        desired.playback_buffer_revision = u64(2);
         desired.playing                  = true;
-        if (! device.apply(desired.clone()) || ! wait_for(device, AudioDeviceState::ReadyPlaying))
+        if (! device.apply(desired.clone()) ||
+            ! wait_for(device, AudioDeviceState::ReadyPlaying, u64(2)))
             return 14;
+        desired.playback_buffer_revision = u64(3);
+        if (! device.apply(desired.clone()) ||
+            ! wait_for(device, AudioDeviceState::ReadyPlaying, u64(3)))
+            return 15;
 
         AudioCapture capture;
         if (! capture.init()) return 20;
@@ -78,6 +88,9 @@ int run(int argc, char**) {
         capture.uninit();
         if (capture.is_inited()) return 21;
         if (! received || window.channels != 2 || window.sample_rate_hz != 48000) return 22;
+        desired.active = false;
+        if (! device.apply(desired.clone()) || ! wait_for(device, AudioDeviceState::Idle))
+            return 16;
     }
 #if !defined(__APPLE__) && !LITO_FEAT_PULSE
     desired.active = true;
@@ -91,6 +104,7 @@ int run(int argc, char**) {
     device.shutdown();
     device.wait_stopped();
     if (device.state() != AudioDeviceState::Stopped) return 6;
+    if (device.completed_playback_buffer_revision() != u64()) return 8;
     if (device.apply(desired.clone())) return 7;
     device.shutdown();
     device.wait_stopped();

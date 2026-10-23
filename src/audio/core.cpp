@@ -99,6 +99,9 @@ public:
                                                                                        : u64();
     }
     auto stream_position_frames() const -> u64 { return position_.load(Ordering::Relaxed); }
+    auto completed_playback_buffer_revision() const -> u64 {
+        return completed_buffer_.load(Ordering::Acquire);
+    }
 
 private:
     bool enqueue(DeviceCommand command) {
@@ -164,9 +167,13 @@ private:
         submitted_ = u64();
         completed_scale_.store(u64(), Ordering::Release);
         scale_end_.store(u64(), Ordering::Relaxed);
+        completed_buffer_.store(u64(), Ordering::Release);
     }
     void apply_desired(AudioDeviceDesiredState desired) {
         if (desired.generation != desired_.generation) close();
+        if (desired.playback_buffer_revision != desired_.playback_buffer_revision ||
+            desired.playing != desired_.playing)
+            completed_buffer_.store(u64(), Ordering::Release);
         desired_ = rstd::move(desired);
         if (desired_.volume_scale_revision != scale_revision_) {
             scale_revision_ = desired_.volume_scale_revision;
@@ -216,6 +223,7 @@ private:
             as<backend::Output>(native_).set_playing(desired_.playing);
             return;
         }
+        completed_buffer_.store(applied_buffer_revision_, Ordering::Release);
         emit(playing_ ? AudioDeviceState::ReadyPlaying : AudioDeviceState::ReadyPaused);
     }
     static void state_callback(void* user, backend::OutputState state, backend::Error error) {
@@ -239,6 +247,7 @@ private:
         case backend::OutputState::Failed:
             self.ready_     = false;
             self.operation_ = Operation::None;
+            self.completed_buffer_.store(u64(), Ordering::Release);
             self.emit(AudioDeviceState::Failed,
                       rstd::format("native audio error ({})", error.native_code));
             return;
@@ -303,6 +312,7 @@ private:
     Atomic<u64>                         position_ { u64() };
     Atomic<u64>                         completed_scale_ { u64() };
     Atomic<u64>                         scale_end_ { u64() };
+    Atomic<u64>                         completed_buffer_ { u64() };
     u64                                 submitted_ {};
     AudioDeviceDesiredState             desired_;
     Vec<Box<dyn<PullChannelObject>>>    channels_;
@@ -334,5 +344,8 @@ auto AudioDevice::desc() const -> DeviceDesc { return impl_->desc(); }
 auto AudioDevice::stream_position_frames() const -> u64 { return impl_->stream_position_frames(); }
 auto AudioDevice::completed_volume_scale_revision() const -> u64 {
     return impl_->completed_volume_scale_revision();
+}
+auto AudioDevice::completed_playback_buffer_revision() const -> u64 {
+    return impl_->completed_playback_buffer_revision();
 }
 } // namespace wavsen::audio

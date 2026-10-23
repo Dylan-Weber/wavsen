@@ -139,6 +139,8 @@ public:
     auto stream_position_frames() const -> u64;
     // Completion includes device playback of the rendered ramp. Zero means pending.
     auto completed_volume_scale_revision() const -> u64;
+    // Nonzero revisions are published after the requested buffer and playback state settle.
+    auto completed_playback_buffer_revision() const -> u64;
 
 private:
     class Impl;
