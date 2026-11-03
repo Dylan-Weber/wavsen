@@ -36,8 +36,14 @@ void main() {
     vec2 y_uv = uv;
     vec2 uv_uv = uv;
     if (all(greaterThan(pc.source_size, uvec2(0)))) {
-        y_uv *= vec2(pc.source_size) / vec2(textureSize(y_tex, 0));
-        uv_uv *= vec2(pc.source_size / 2) / vec2(textureSize(uv_tex, 0));
+        vec2 y_size  = vec2(textureSize(y_tex, 0));
+        vec2 uv_size = vec2(textureSize(uv_tex, 0));
+        y_uv *= vec2(pc.source_size) / y_size;
+        uv_uv *= vec2(pc.source_size / 2) / uv_size;
+        // Bilinear filtering at the visible edge would blend in the decoder's padding rows
+        // (which can be any colour); stay on the last visible texel centre.
+        y_uv  = min(y_uv, (vec2(pc.source_size) - 0.5) / y_size);
+        uv_uv = min(uv_uv, (vec2(pc.source_size / 2) - 0.5) / uv_size);
     }
     float Y  = texture(y_tex, y_uv).r;
     vec2  CC = texture(uv_tex, uv_uv).rg;
