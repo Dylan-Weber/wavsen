@@ -1629,6 +1629,10 @@ auto YuvToRgba::convert_av_vk_frame_(ConversionReservation& reservation, VkFrame
     ShaderPushConstants pc {};
     pc.dst_w = dst_w;
     pc.dst_h = dst_h;
+    // The decoder image is allocated at the codec's aligned size (e.g. 1088 rows for 1080p H.264);
+    // sample only the visible area so the padding rows do not show up as a green bar.
+    pc.source_w = frame.width.to_primitive();
+    pc.source_h = frame.height.to_primitive();
     for (int i = 0; i < 3; ++i) {
         pc.m_r[i]    = cm.m_r[i];
         pc.m_g[i]    = cm.m_g[i];
