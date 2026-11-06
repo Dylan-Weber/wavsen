@@ -19,6 +19,9 @@ export import wavsen.ffi.ffmpeg.base;
 namespace _wv_avcodec
 {
 
+inline constexpr int k_AV_INPUT_BUFFER_PADDING_SIZE = AV_INPUT_BUFFER_PADDING_SIZE;
+#undef AV_INPUT_BUFFER_PADDING_SIZE
+
 const VkVideoProfileListInfoKHR* find_video_profiles(const void* chain) {
     auto* node = static_cast<const VkBaseInStructure*>(chain);
     while (node) {
@@ -96,6 +99,9 @@ int prepare_vulkan_decode_frames(AVBufferRef* frames_ref) {
 } // namespace _wv_avcodec
 
 export {
+
+    inline constexpr int AV_INPUT_BUFFER_PADDING_SIZE =
+        _wv_avcodec::k_AV_INPUT_BUFFER_PADDING_SIZE;
 
     using ::avcodec_default_get_format;
     using ::avcodec_get_hw_frames_parameters;
