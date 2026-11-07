@@ -37,6 +37,17 @@ struct ThumbOptions {
     bool prefer_keyframe { true };
 };
 
+struct MediaInfo {
+    u32 width, height;
+};
+
+struct ProbeOptions {
+    u64 operation_ms { 10000 };
+    u64 probe_bytes { 8 * 1024 * 1024 };
+};
+
+auto probe_media(ref<str> path, const ProbeOptions& opts = {}) -> Result<MediaInfo, Error>;
+
 auto extract_thumbnail(ref<str> path, const ThumbOptions& opts) -> Result<RgbaImage, Error>;
 
 } // namespace wavsen::decode

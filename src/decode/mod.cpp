@@ -5,6 +5,7 @@ import wavsen.ffi.ffmpeg;
 import wavsen.ffi.ffmpeg.owner;
 
 using namespace rstd::prelude;
+using namespace rstd::literals;
 
 namespace wavsen::decode
 {
@@ -60,6 +61,73 @@ void compute_target(int src_w, int src_h, u32 max_edge, u32& tw, u32& th) {
 }
 
 } // namespace
+
+auto probe_media(ref<str> path, const ProbeOptions& opts) -> Result<MediaInfo, Error> {
+    if (path.is_empty() || opts.operation_ms == u64() || opts.probe_bytes == u64())
+        return Err(mk(ErrorKind::InvalidArgs, "probe requires a local path and limits"));
+    struct Deadline {
+        rstd::time::Instant started = rstd::time::Instant::now();
+        u64                 limit;
+        static int          interrupted(void* opaque) {
+            auto& self = *static_cast<Deadline*>(opaque);
+            return self.started.elapsed().as_millis() >= self.limit;
+        }
+    } deadline { .limit = opts.operation_ms };
+    auto name = rstd::ffi::CString::make(String::make(path));
+    if (name.is_err()) return Err(mk(ErrorKind::InvalidArgs, "invalid path"));
+    auto* raw = avformat_alloc_context();
+    if (! raw) return Err(mk(ErrorKind::OpenFailed, "cannot allocate format context"));
+    raw->interrupt_callback = { Deadline::interrupted, &deadline };
+    raw->probesize =
+        static_cast<rstd::int64_t>(opts.probe_bytes.min(u64(64 * 1024 * 1024)).to_primitive());
+    raw->max_analyze_duration = 1000000;
+    raw->max_streams          = 64;
+    AVDictionary* options     = nullptr;
+    av_dict_set(&options, "protocol_whitelist", "file", 0);
+    int rc = avformat_open_input(&raw, name->as_ptr(), nullptr, &options);
+    av_dict_free(&options);
+    if (rc < 0) return Err(mk(ErrorKind::OpenFailed, av_err_str(rc)));
+    FmtCtxPtr          format(raw);
+    Vec<AVDictionary*> decoder_options;
+    for (unsigned i = 0; i < format->nb_streams; ++i) {
+        AVDictionary* decoder_option = nullptr;
+        av_dict_set(&decoder_option, "threads", "1", 0);
+        av_dict_set(&decoder_option, "max_pixels", "268435456", 0);
+        decoder_options.push(rstd::move(decoder_option));
+    }
+    avformat_find_stream_info(format.get(),
+                              decoder_options.is_empty() ? nullptr : decoder_options.data());
+    for (auto& option : decoder_options) av_dict_free(&option);
+    int stream = av_find_best_stream(format.get(), AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+    if (stream < 0) return Err(mk(ErrorKind::NoVideoStream, "no video/image stream"));
+    auto* parameters = format->streams[stream]->codecpar;
+    if (parameters->width > 0 && parameters->height > 0)
+        return Ok(MediaInfo { u32(parameters->width), u32(parameters->height) });
+    auto* decoder = avcodec_find_decoder(parameters->codec_id);
+    if (! decoder) return Err(mk(ErrorKind::DecoderInit, "decoder unavailable"));
+    CodecCtxPtr codec(avcodec_alloc_context3(decoder));
+    if (! codec || avcodec_parameters_to_context(codec.get(), parameters) < 0)
+        return Err(mk(ErrorKind::DecoderInit, "cannot configure decoder"));
+    codec->thread_count = 1;
+    codec->max_pixels   = 268435456;
+    if (avcodec_open2(codec.get(), decoder, nullptr) < 0)
+        return Err(mk(ErrorKind::DecoderInit, "cannot open decoder"));
+    PacketPtr packet(av_packet_alloc());
+    FramePtr  frame(av_frame_alloc());
+    if (! packet || ! frame) return Err(mk(ErrorKind::DecodeFailed, "cannot allocate frame"));
+    for (int i = 0; i < 64 && ! Deadline::interrupted(&deadline); ++i) {
+        rc = av_read_frame(format.get(), packet.get());
+        if (rc < 0) break;
+        if (packet->stream_index == stream) {
+            rc = avcodec_send_packet(codec.get(), packet.get());
+            if (rc >= 0 && avcodec_receive_frame(codec.get(), frame.get()) == 0 &&
+                frame->width > 0 && frame->height > 0)
+                return Ok(MediaInfo { u32(frame->width), u32(frame->height) });
+        }
+        av_packet_unref(packet.get());
+    }
+    return Err(mk(ErrorKind::DecodeFailed, "no valid dimensions within probe limits"));
+}
 
 auto extract_thumbnail(ref<str> path, const ThumbOptions& opts) -> Result<RgbaImage, Error> {
     if (opts.max_edge == u32()) {

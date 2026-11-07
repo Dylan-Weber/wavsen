@@ -2,6 +2,7 @@ module wavsen.video;
 
 import rstd;
 import rstd.log;
+import wavsen.decode;
 import vvk;
 import :vk_device;
 import :video_decoder;
@@ -643,39 +644,6 @@ bool seek_to_start(VideoDecoder::State& st) {
 
 } // namespace
 
-namespace
-{
-bool probe_native_impl(ref<str> path, u32* native_width, u32* native_height, Error* err) {
-    *native_width             = u32();
-    *native_height            = u32();
-    AVFormatContext* raw_fmt  = nullptr;
-    auto             path_c   = rstd::ffi::CString::make(String::make(path)).unwrap();
-    auto             path_raw = path_c.as_ptr();
-    if (int rc = avformat_open_input(&raw_fmt, path_raw, nullptr, nullptr); rc < 0) {
-        fail(err, rstd::format("avformat_open_input: {}", av_err_str(rc).as_str()));
-        return false;
-    }
-    FmtCtxPtr fmt(raw_fmt);
-    if (int rc = avformat_find_stream_info(fmt.get(), nullptr); rc < 0) {
-        fail(err, rstd::format("avformat_find_stream_info: {}", av_err_str(rc).as_str()));
-        return false;
-    }
-    int idx = av_find_best_stream(fmt.get(), AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
-    if (idx < 0) {
-        fail(err, "no video stream in file"_str);
-        return false;
-    }
-    AVCodecParameters* par = fmt->streams[idx]->codecpar;
-    if (par->width <= 0 || par->height <= 0) {
-        fail(err, "video stream has invalid native dimensions"_str);
-        return false;
-    }
-    *native_width  = u32(static_cast<rstd::uint32_t>(par->width));
-    *native_height = u32(static_cast<rstd::uint32_t>(par->height));
-    return true;
-}
-} // namespace
-
 /* AVIOContext shims that bounce libavformat IO into an IInputStream. */
 namespace
 {
@@ -695,11 +663,13 @@ rstd::int64_t avio_seek_shim(void* opaque, rstd::int64_t offset, int whence) {
 VideoDecoder::~VideoDecoder() = default;
 
 auto VideoDecoder::probe_native(ref<str> path) -> Result<ProbeResult, Error> {
-    Error err;
-    u32   width;
-    u32   height;
-    if (! probe_native_impl(path, &width, &height, &err)) return Err(rstd::move(err));
-    return Ok(ProbeResult { width, height });
+    auto result = wavsen::decode::probe_media(path);
+    if (result.is_err()) {
+        Error error;
+        fail(&error, result.unwrap_err().message);
+        return Err(rstd::move(error));
+    }
+    return Ok(ProbeResult { result->width, result->height });
 }
 
 auto VideoDecoder::open(ref<str> path, u32 target_width, u32 target_height, bool loop)
