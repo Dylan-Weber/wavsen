@@ -620,6 +620,21 @@ bool ensure_sws(VideoDecoder::State& st, int src_w, int src_h, AVPixelFormat src
                                 nullptr,
                                 nullptr));
     if (! st.sws) return false;
+    /* swscale reads yuvj* sources as full range and writes NV12 as limited, so it
+     * would squeeze a full-range picture into 16..235 while the frame keeps its
+     * full-range tag, and YuvToRgba then expands it a second time (black at 16,
+     * white at 235). Write NV12 in the source's own range so the tag stays true. */
+    int* inv_table  = nullptr;
+    int* table      = nullptr;
+    int  src_range  = 0;
+    int  dst_range  = 0;
+    int  brightness = 0, contrast = 0, saturation = 0;
+    if (sws_getColorspaceDetails(st.sws.get(), &inv_table, &src_range, &table, &dst_range,
+                                 &brightness, &contrast, &saturation) >= 0 &&
+        dst_range != src_range) {
+        sws_setColorspaceDetails(st.sws.get(), inv_table, src_range, table, src_range, brightness,
+                                 contrast, saturation);
+    }
     st.sws_src_w   = src_w;
     st.sws_src_h   = src_h;
     st.sws_src_fmt = src_fmt;
