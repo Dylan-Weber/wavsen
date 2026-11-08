@@ -125,7 +125,9 @@ public:
 
     void set_event_sink(Option<AudioDeviceEventSink>);
     auto apply(AudioDeviceDesiredState) -> bool;
-    auto mount(Box<dyn<PullChannelObject>>, u64 stream_revision) -> bool;
+    // Nonzero channel IDs must be unique within the stream revision.
+    auto mount(Box<dyn<PullChannelObject>>, u64 stream_revision, u64 channel_id = {}) -> bool;
+    auto unmount(u64 channel_id, u64 stream_revision) -> bool;
     auto unmount_all(u64 stream_revision) -> bool;
     void shutdown();
     void wait_stopped();

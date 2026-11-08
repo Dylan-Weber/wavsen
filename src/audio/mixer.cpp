@@ -54,6 +54,7 @@ public:
     AudioDeviceState    observed_state { AudioDeviceState::Idle };
     u64                 generation;
     u64                 stream_revision;
+    u64                 next_stream_id { 1 };
     u64                 volume_scale_revision;
     f32                 volume { f32(1.0f) };
     f32                 volume_scale { f32(1.0f) };
@@ -67,11 +68,20 @@ SoundManager::SoundManager(AudioClientIdentity identity)
     : impl_(Box<Impl>::make(rstd::move(identity))) {}
 SoundManager::~SoundManager() = default;
 
-void SoundManager::mount(Box<dyn<SoundStreamObject>> ss) {
+auto SoundManager::mount(Box<dyn<SoundStreamObject>> ss) -> Option<SoundStreamId> {
+    if (impl_->next_stream_id == u64::MAX) return None();
+    auto id      = impl_->next_stream_id++;
     auto channel = Box<StreamPullChannel>::make(rstd::move(ss));
-    (void)impl_->device.mount(Box<dyn<PullChannelObject>>::from_raw(
+    if (! impl_->device.mount(Box<dyn<PullChannelObject>>::from_raw(
                                   dyn<PullChannelObject>::from_ptr(rstd::move(channel).into_raw())),
-                              impl_->stream_revision);
+                              impl_->stream_revision,
+                              id))
+        return None();
+    return Some(SoundStreamId { id });
+}
+
+auto SoundManager::unmount(SoundStreamId stream_id) -> bool {
+    return impl_->device.unmount(stream_id.value, impl_->stream_revision);
 }
 
 void SoundManager::unmount_all() {

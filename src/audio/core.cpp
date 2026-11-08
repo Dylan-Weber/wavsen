@@ -25,6 +25,7 @@ enum class CommandKind
 {
     Apply,
     Mount,
+    UnmountChannel,
     Unmount,
     Shutdown
 };
@@ -33,6 +34,11 @@ struct DeviceCommand {
     AudioDeviceDesiredState             desired;
     Option<Box<dyn<PullChannelObject>>> channel;
     u64                                 revision {};
+    u64                                 channel_id {};
+};
+struct MountedChannel {
+    u64                         id;
+    Box<dyn<PullChannelObject>> channel;
 };
 struct CommandQueue {
     Vec<DeviceCommand> pending;
@@ -64,10 +70,16 @@ public:
         return enqueue(
             DeviceCommand { .kind = CommandKind::Apply, .desired = rstd::move(desired) });
     }
-    bool mount(Box<dyn<PullChannelObject>> channel, u64 revision) {
-        return enqueue(DeviceCommand { .kind     = CommandKind::Mount,
-                                       .channel  = Some(rstd::move(channel)),
-                                       .revision = revision });
+    bool mount(Box<dyn<PullChannelObject>> channel, u64 revision, u64 id) {
+        return enqueue(DeviceCommand { .kind       = CommandKind::Mount,
+                                       .channel    = Some(rstd::move(channel)),
+                                       .revision   = revision,
+                                       .channel_id = id });
+    }
+    bool unmount(u64 id, u64 revision) {
+        if (id == u64()) return false;
+        return enqueue(DeviceCommand {
+            .kind = CommandKind::UnmountChannel, .revision = revision, .channel_id = id });
     }
     bool unmount_all(u64 revision) {
         return enqueue(DeviceCommand { .kind = CommandKind::Unmount, .revision = revision });
@@ -141,7 +153,14 @@ private:
                     if (command.revision < stream_revision_) break;
                     stream_revision_ = command.revision;
                     (*command.channel)->channel().pass_desc(desc());
-                    channels_.push(rstd::move(command.channel).unwrap());
+                    channels_.push(MountedChannel { command.channel_id,
+                                                    rstd::move(command.channel).unwrap() });
+                    break;
+                case CommandKind::UnmountChannel:
+                    if (command.revision != stream_revision_) break;
+                    channels_.retain([&](const MountedChannel& channel) {
+                        return channel.id != command.channel_id;
+                    });
                     break;
                 case CommandKind::Unmount:
                     if (command.revision < stream_revision_) break;
@@ -233,7 +252,7 @@ private:
             self.ready_                   = true;
             self.playing_                 = false;
             self.applied_buffer_revision_ = self.desired_.playback_buffer_revision;
-            for (auto& channel : self.channels_) channel->channel().pass_desc(self.desc());
+            for (auto& channel : self.channels_) channel.channel->channel().pass_desc(self.desc());
             break;
         case backend::OutputState::Playing:
         case backend::OutputState::Paused:
@@ -271,9 +290,9 @@ private:
             auto*      block = output + offset * 2;
             for (auto& channel : channels_) {
                 rstd::mem::memset(scratch_, u8(), usize(count) * usize(2 * sizeof(float)));
-                channel->channel().output_offset(submitted_ + u64(offset));
-                auto produced =
-                    rstd::cmp::min(channel->channel().next_pcm(scratch_, u32(count)), u64(count));
+                channel.channel->channel().output_offset(submitted_ + u64(offset));
+                auto produced = rstd::cmp::min(
+                    channel.channel->channel().next_pcm(scratch_, u32(count)), u64(count));
                 for (rstd::uint64_t i = 0; i < produced.to_primitive() * 2; ++i)
                     block[i] += scratch_[i];
             }
@@ -315,7 +334,7 @@ private:
     Atomic<u64>                         completed_buffer_ { u64() };
     u64                                 submitted_ {};
     AudioDeviceDesiredState             desired_;
-    Vec<Box<dyn<PullChannelObject>>>    channels_;
+    Vec<MountedChannel>                 channels_;
     detail::VolumeScaleRamp             scale_;
     float                               scratch_[8192 * 2] {};
     u64 stream_revision_ {}, scale_revision_ {}, applied_buffer_revision_ {},
@@ -333,9 +352,10 @@ void AudioDevice::set_event_sink(Option<AudioDeviceEventSink> sink) {
 bool AudioDevice::apply(AudioDeviceDesiredState desired) {
     return impl_->apply(rstd::move(desired));
 }
-bool AudioDevice::mount(Box<dyn<PullChannelObject>> channel, u64 revision) {
-    return impl_->mount(rstd::move(channel), revision);
+bool AudioDevice::mount(Box<dyn<PullChannelObject>> channel, u64 revision, u64 id) {
+    return impl_->mount(rstd::move(channel), revision, id);
 }
+bool AudioDevice::unmount(u64 id, u64 revision) { return impl_->unmount(id, revision); }
 bool AudioDevice::unmount_all(u64 revision) { return impl_->unmount_all(revision); }
 void AudioDevice::shutdown() { impl_->shutdown(); }
 void AudioDevice::wait_stopped() { impl_->wait_stopped(); }

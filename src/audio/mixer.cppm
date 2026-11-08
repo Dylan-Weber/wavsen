@@ -43,6 +43,10 @@ struct SoundStreamObject {
     template<typename T>
     using Funcs = rstd::TraitFuncs<&T::stream>;
 };
+struct SoundStreamId {
+    u64 value;
+};
+
 // Main-loop-owned playback policy. The AudioDevice backend owns native
 // resources and emits events that the caller must relay back to this owner.
 class SoundManager {
@@ -52,7 +56,9 @@ public:
     SoundManager(const SoundManager&)            = delete;
     SoundManager& operator=(const SoundManager&) = delete;
 
-    void mount(Box<dyn<SoundStreamObject>>);
+    auto mount(Box<dyn<SoundStreamObject>>) -> Option<SoundStreamId>;
+    // Accepted removal completes asynchronously on the audio mainloop.
+    auto unmount(SoundStreamId stream_id) -> bool;
     void unmount_all();
 
     void activate(AudioDeviceEventSink);
