@@ -88,6 +88,7 @@ export {
     using ::AV_PIX_FMT_NV12;
     using ::AV_PIX_FMT_RGBA;
     using ::AV_PIX_FMT_VULKAN;
+    using ::AV_PIX_FMT_CUDA;
     using ::AV_PIX_FMT_YUV420P;
 #if LITO_FEAT_VAAPI && !defined(__APPLE__)
     using ::AV_PIX_FMT_VAAPI;
@@ -105,6 +106,7 @@ export {
     using ::AV_HWDEVICE_TYPE_DRM;
     using ::AV_HWDEVICE_TYPE_VIDEOTOOLBOX;
     using ::AV_HWDEVICE_TYPE_VULKAN;
+    using ::AV_HWDEVICE_TYPE_CUDA;
 #if LITO_FEAT_VAAPI && !defined(__APPLE__)
     using ::AV_HWDEVICE_TYPE_VAAPI;
 #endif

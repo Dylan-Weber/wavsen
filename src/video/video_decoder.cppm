@@ -124,6 +124,9 @@ enum class HwAccel
     // The value is part of the cross-platform option ABI; the implementation
     // reports it unavailable on non-Apple targets.
     VideoToolbox = 4,
+    // NVDEC through FFmpeg's CUDA hwcontext; frames are downloaded to system memory,
+    // so the consumer still sees FrameKind::Sw.
+    Cuda = 5,
 };
 
 struct OpenOpts {
@@ -352,6 +355,8 @@ public:
     auto source_size() const -> ProbeResult;
 
     FrameKind kind() const { return kind_; }
+    // The decode backend actually in use (None for software).
+    HwAccel   backend() const { return backend_; }
     bool      using_vk_frames() const { return kind_ == FrameKind::VulkanShared; }
     u32       width() const { return target_width_; }
     u32       height() const { return target_height_; }
@@ -400,6 +405,7 @@ private:
     u32        target_height_ {};
     bool       loop_ { false };
     FrameKind  kind_ { FrameKind::Sw };
+    HwAccel    backend_ { HwAccel::None };
 };
 
 } // namespace wavsen::video

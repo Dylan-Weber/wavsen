@@ -131,6 +131,26 @@ AVBufferRef* make_vaapi_hwdevice(const String& render_node, Error* err) {
 }
 #endif
 
+/* NVDEC through FFmpeg's CUDA hwcontext (dlopens libcuda / libnvcuvid). It decodes on the
+ * NVIDIA GPU whichever GPU the renderer displays on; frames come back to system memory. */
+AVPixelFormat get_format_prefer_cuda(AVCodecContext* cctx, const AVPixelFormat* fmts) {
+    for (const AVPixelFormat* p = fmts; *p != AV_PIX_FMT_NONE; ++p) {
+        if (*p == AV_PIX_FMT_CUDA) return AV_PIX_FMT_CUDA;
+    }
+    return avcodec_default_get_format(cctx, fmts);
+}
+
+AVBufferRef* make_cuda_hwdevice(Error* err) {
+    AVBufferRef* hwd = nullptr;
+    int          rc  = av_hwdevice_ctx_create(&hwd, AV_HWDEVICE_TYPE_CUDA, nullptr, nullptr, 0);
+    if (rc < 0 || ! hwd) {
+        fail(err, rstd::format("av_hwdevice_ctx_create(CUDA): {}", av_err_str(rc).as_str()));
+        if (hwd) av_buffer_unref(&hwd);
+        return nullptr;
+    }
+    return hwd;
+}
+
 String resolve_render_node(const Producer& producer, const OpenOpts& opts) {
     if (! opts.render_node.is_empty()) return opts.render_node.clone();
     auto node = producer.drm_render_node();
@@ -143,6 +163,7 @@ const char* hw_accel_name(HwAccel accel) {
     case HwAccel::Vulkan: return "vulkan";
     case HwAccel::Vaapi: return "vaapi";
     case HwAccel::VideoToolbox: return "videotoolbox";
+    case HwAccel::Cuda: return "cuda";
     case HwAccel::None: return "none";
     }
     return "unknown";
@@ -707,7 +728,7 @@ auto VideoDecoder::open_with_vk(ref<str> path, u32 target_width, u32 target_heig
     auto render_node = resolve_render_node(producer, opts);
     /* Resolve trial order. On Apple, VideoToolbox is the first choice because
      * MoltenVK generally does not expose Vulkan video decode queues. */
-    HwAccel order[3] = { HwAccel::None, HwAccel::None, HwAccel::None };
+    HwAccel order[4] = { HwAccel::None, HwAccel::None, HwAccel::None, HwAccel::None };
     int     n_order  = 0;
     switch (opts.hwaccel) {
     case HwAccel::Auto:
@@ -717,7 +738,8 @@ auto VideoDecoder::open_with_vk(ref<str> path, u32 target_width, u32 target_heig
 #else
         order[0] = HwAccel::Vulkan;
         order[1] = HwAccel::Vaapi;
-        n_order  = 2;
+        order[2] = HwAccel::Cuda;
+        n_order  = 3;
 #endif
         break;
     case HwAccel::Vulkan:
@@ -730,6 +752,10 @@ auto VideoDecoder::open_with_vk(ref<str> path, u32 target_width, u32 target_heig
         break;
     case HwAccel::VideoToolbox:
         order[0] = HwAccel::VideoToolbox;
+        n_order  = 1;
+        break;
+    case HwAccel::Cuda:
+        order[0] = HwAccel::Cuda;
         n_order  = 1;
         break;
     case HwAccel::None: n_order = 0; break;
@@ -749,6 +775,8 @@ auto VideoDecoder::open_with_vk(ref<str> path, u32 target_width, u32 target_heig
 #else
             local_err.message = String::make("wavsen built without VAAPI support"_str);
 #endif
+        } else if (order[i] == HwAccel::Cuda) {
+            hwd = make_cuda_hwdevice(&local_err);
         } else if (order[i] == HwAccel::VideoToolbox) {
 #if defined(__APPLE__)
             hwd  = make_videotoolbox_hwdevice(&local_err);
@@ -842,7 +870,7 @@ auto VideoDecoder::open_from_stream(InputStreamFactory make_stream, u32 target_w
      * gets a fresh IInputStream from the factory — build_internal
      * consumes it, and on failure State's destructor cleans up. */
     auto    render_node = resolve_render_node(*producer, opts);
-    HwAccel order[3]    = { HwAccel::None, HwAccel::None, HwAccel::None };
+    HwAccel order[4] = { HwAccel::None, HwAccel::None, HwAccel::None, HwAccel::None };
     int     n_order     = 0;
     switch (opts.hwaccel) {
     case HwAccel::Auto:
@@ -852,7 +880,8 @@ auto VideoDecoder::open_from_stream(InputStreamFactory make_stream, u32 target_w
 #else
         order[0] = HwAccel::Vulkan;
         order[1] = HwAccel::Vaapi;
-        n_order  = 2;
+        order[2] = HwAccel::Cuda;
+        n_order  = 3;
 #endif
         break;
     case HwAccel::Vulkan:
@@ -865,6 +894,10 @@ auto VideoDecoder::open_from_stream(InputStreamFactory make_stream, u32 target_w
         break;
     case HwAccel::VideoToolbox:
         order[0] = HwAccel::VideoToolbox;
+        n_order  = 1;
+        break;
+    case HwAccel::Cuda:
+        order[0] = HwAccel::Cuda;
         n_order  = 1;
         break;
     case HwAccel::None: n_order = 0; break;
@@ -884,6 +917,8 @@ auto VideoDecoder::open_from_stream(InputStreamFactory make_stream, u32 target_w
 #else
             local_err.message = String::make("wavsen built without VAAPI support"_str);
 #endif
+        } else if (order[i] == HwAccel::Cuda) {
+            hwd = make_cuda_hwdevice(&local_err);
         } else if (order[i] == HwAccel::VideoToolbox) {
 #if defined(__APPLE__)
             hwd  = make_videotoolbox_hwdevice(&local_err);
@@ -954,6 +989,12 @@ auto VideoDecoder::build_internal(InputSpec input, u32 target_width, u32 target_
     self->state_->decoder_generation = next_decoder_generation();
     /* Provisional; downgraded to Sw below if hwdevice attach fails. */
     self->kind_ = requested_kind;
+    switch (requested_kind) {
+    case FrameKind::VulkanShared: self->backend_ = HwAccel::Vulkan; break;
+    case FrameKind::VaapiDrm: self->backend_ = HwAccel::Vaapi; break;
+    case FrameKind::VideoToolbox: self->backend_ = HwAccel::VideoToolbox; break;
+    case FrameKind::Sw: break;
+    }
     /* Take ownership of the caller's hwdevice ref immediately so that
      * any early-return path below (avformat_open_input failure etc.)
      * unrefs it via state.hwd's deleter rather than leaking. The codec
@@ -1059,9 +1100,17 @@ auto VideoDecoder::build_internal(InputSpec input, u32 target_width, u32 target_
 
     /* Hand the codec its own ref on the hwdevice the trial loop picked
      * (if any). Sw mode has hwd == nullptr — codec stays sw. */
+    const bool cuda =
+        self->state_->hwd && requested_kind == FrameKind::Sw &&
+        reinterpret_cast<AVHWDeviceContext*>(self->state_->hwd->data)->type == AV_HWDEVICE_TYPE_CUDA;
     if (self->state_->hwd) {
         self->state_->cctx->hw_device_ctx = av_buffer_ref(self->state_->hwd.get());
-        if (requested_kind == FrameKind::VulkanShared) {
+        if (cuda) {
+            self->state_->cctx->get_format = get_format_prefer_cuda;
+            self->backend_                 = HwAccel::Cuda;
+            rstd::log::info("VideoDecoder: AV_HWDEVICE_TYPE_CUDA attached for codec {}.",
+                            avcodec_get_name(par->codec_id));
+        } else if (requested_kind == FrameKind::VulkanShared) {
             /* get_format_prefer_vulkan runs during avcodec_open2 below
              * and bootstraps a compatible hw_frames_ctx if it picks
              * AV_PIX_FMT_VULKAN. On any failure inside that
@@ -1121,6 +1170,9 @@ auto VideoDecoder::build_internal(InputSpec input, u32 target_width, u32 target_
     if (requested_kind == FrameKind::VulkanShared) {
         want_pix_fmt = AV_PIX_FMT_VULKAN;
         hw_label     = "vulkan";
+    } else if (cuda) {
+        want_pix_fmt = AV_PIX_FMT_CUDA;
+        hw_label     = "cuda";
     } else if (requested_kind == FrameKind::VaapiDrm) {
         want_pix_fmt = AV_PIX_FMT_VAAPI;
         hw_label     = "vaapi";
@@ -1435,7 +1487,7 @@ int VideoDecoder::next_frame_(Nv12Frame& out, Error* err) {
              * in whatever YUV format the AVHWFramesContext exposes —
              * typically NV12 — and swscale handles whatever it is. */
             AVFrame* feed = st.src_frame.get();
-            if (feed->format == AV_PIX_FMT_VULKAN) {
+            if (feed->hw_frames_ctx) {
                 if (! st.sw_frame) st.sw_frame.reset(av_frame_alloc());
                 if (! st.sw_frame) {
                     fail(err, "av_frame_alloc(sw_frame) failed"_str);
