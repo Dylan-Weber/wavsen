@@ -83,15 +83,25 @@ int prepare_vulkan_decode_frames(AVBufferRef* frames_ref) {
     vkframes->usage = static_cast<VkImageUsageFlagBits>(
         static_cast<VkImageUsageFlags>(vkframes->usage) & consumer_usage);
 
-    VkImageUsageFlags actual_usage = vkframes->usage;
+    /* Newer hwcontext_vulkan versions may add generic TRANSFER_DST and STORAGE usage
+     * during initialization. Some decoders (NVIDIA) do not offer STORAGE on decode
+     * output images, so accept the first of these that the decoder reports. */
+    VkImageUsageFlags usage_choices[3] = { vkframes->usage, vkframes->usage, vkframes->usage };
 #if LIBAVUTIL_VERSION_MAJOR >= 60
-    // Newer hwcontext_vulkan versions add generic format usage during initialization.
-    actual_usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+    usage_choices[0] |= VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+    usage_choices[1] |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 #endif
 
     auto* device_context = reinterpret_cast<AVHWDeviceContext*>(frames->device_ref->data);
     auto* vkdevice       = reinterpret_cast<AVVulkanDeviceContext*>(device_context->hwctx);
-    if (! supports_video_format(vkdevice, vkframes, profiles, actual_usage)) return -ENOTSUP;
+    bool supported = false;
+    for (VkImageUsageFlags usage : usage_choices) {
+        if (supports_video_format(vkdevice, vkframes, profiles, usage)) {
+            supported = true;
+            break;
+        }
+    }
+    if (! supported) return -ENOTSUP;
 
     return av_hwframe_ctx_init(frames_ref);
 }

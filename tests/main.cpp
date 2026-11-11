@@ -37,6 +37,18 @@ namespace wavsen::tests::presenter
 {
 int run(int, char**);
 }
+namespace wavsen::tests::video_range
+{
+int run(int, char**);
+}
+namespace wavsen::tests::video_hwdec
+{
+int run(int, char**);
+}
+namespace wavsen::tests::video_bench
+{
+int run(int, char**);
+}
 #endif
 #if LITO_FEAT_IMAGE
 namespace wavsen::tests::image
@@ -77,6 +89,9 @@ int main(int argc, char** argv) {
 #if LITO_FEAT_VIDEO
     suites.push({ "decode-owner"_str, wavsen::tests::decode_owner::run });
     suites.push({ "presenter"_str, wavsen::tests::presenter::run });
+    suites.push({ "video-range"_str, wavsen::tests::video_range::run });
+    suites.push({ "video-hwdec"_str, wavsen::tests::video_hwdec::run });
+    suites.push({ "video-bench"_str, wavsen::tests::video_bench::run });
 #endif
 #if LITO_FEAT_IMAGE
     suites.push({ "image"_str, wavsen::tests::image::run });

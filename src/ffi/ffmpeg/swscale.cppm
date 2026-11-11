@@ -23,8 +23,10 @@ export {
     using ::SwsContext;
 
     using ::sws_freeContext;
+    using ::sws_getColorspaceDetails;
     using ::sws_getContext;
     using ::sws_scale;
+    using ::sws_setColorspaceDetails;
 
 #if LIBSWSCALE_VERSION_MAJOR < 9
     constexpr auto SWS_FAST_BILINEAR = M_SWS_FAST_BILINEAR;
