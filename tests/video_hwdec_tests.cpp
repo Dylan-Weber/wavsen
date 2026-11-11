@@ -99,6 +99,33 @@ static int cuda_decode_is_used(const String& clip) {
     return 0;
 }
 
+// The picture NVDEC hands over keeps the stream's colour range: a full-range clip must still reach the
+// converter tagged full range (the downloaded frame carries only pixels, the tags come from the decoded one).
+static int cuda_keeps_range() {
+    void* cuda = dlopen("libcuda.so.1", RTLD_LAZY);
+    if (! cuda) return 0;
+    dlclose(cuda);
+    auto prod = wavsen::video::Producer::create(u32(64), u32(64));
+    if (prod.is_err()) return 0;
+    auto producer = rstd::move(prod).unwrap();
+    auto path = rstd::path::PathBuf::from(rstd::ffi::CStr::from_ptr(__FILE__).to_str().unwrap());
+    auto dir  = rstd::path::PathBuf::from(*path.as_path().parent());
+    auto clip = dir.join("data/full-range.mp4"_str);
+    wavsen::video::OpenOpts opts;
+    opts.hwaccel = wavsen::video::HwAccel::Cuda;
+    auto decoder = wavsen::video::VideoDecoder::open_with_vk(
+                       clip.as_path().as_os_str().to_str().unwrap(), u32(64), u32(64), false, *producer, opts)
+                       .unwrap();
+    if (decoder->backend() != wavsen::video::HwAccel::Cuda) {
+        rstd::io::println("NVDEC does not take the full-range clip, range check skipped");
+        return 0;
+    }
+    wavsen::video::Nv12Frame frame;
+    rstd_assert(decoder->next_frame(frame).unwrap() == wavsen::video::NextFrame::Ok);
+    rstd_assert(frame.color_range == u32(1));
+    return 0;
+}
+
 // hwdec=none never touches a hardware decoder
 static int none_is_software(const String& clip) {
     auto producer = wavsen::video::Producer::create(u32(320), u32(240));
@@ -118,6 +145,7 @@ int run(int, char**) {
     auto clip = clip_path();
     if (int rc = vulkan_decode_is_used(clip)) return rc;
     if (int rc = cuda_decode_is_used(clip)) return rc;
+    if (int rc = cuda_keeps_range()) return rc;
     return none_is_software(clip);
 }
 

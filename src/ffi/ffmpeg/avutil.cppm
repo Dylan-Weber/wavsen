@@ -121,6 +121,7 @@ export {
 
     using ::av_buffer_alloc;
     using ::av_buffer_ref;
+    using ::av_frame_copy_props;
     using ::av_buffer_unref;
 
 

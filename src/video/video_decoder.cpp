@@ -1501,8 +1501,9 @@ int VideoDecoder::next_frame_(Nv12Frame& out, Error* err) {
                     av_frame_unref(st.src_frame.get());
                     return -1;
                 }
-                /* Preserve PTS across the transfer (transfer_data copies
-                 * pixel data only). */
+                /* transfer_data copies pixel data only: keep the timestamps and the
+                 * colour tags (range, matrix) of the decoded frame. */
+                av_frame_copy_props(st.sw_frame.get(), feed);
                 st.sw_frame->pts                   = feed->pts;
                 st.sw_frame->best_effort_timestamp = feed->best_effort_timestamp;
                 feed                               = st.sw_frame.get();

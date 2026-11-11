@@ -71,6 +71,7 @@ sources = [
   "tests/presenter_tests.cpp",
   "tests/video_range_tests.cpp",
   "tests/video_hwdec_tests.cpp",
+  "tests/video_bench.cpp",
   "tests/image_tests.cpp",
   "tests/still_tests.cpp",
   "tests/container_tests.cpp",
